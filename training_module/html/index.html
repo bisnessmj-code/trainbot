@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Training Module</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Menu principal -->
+    <div id="mainMenu" class="menu-container hidden">
+        <div class="menu-content">
+            <h1>🎯 Centre d'Entraînement</h1>
+            <p class="menu-description">Améliorez vos compétences de combat en affrontant des adversaires IA</p>
+            
+            <div class="menu-buttons">
+                <button id="startButton" class="btn btn-primary">
+                    <span class="btn-icon">▶</span>
+                    Lancer l'entraînement
+                </button>
+                <button id="closeButton" class="btn btn-secondary">
+                    <span class="btn-icon">✕</span>
+                    Fermer
+                </button>
+            </div>
+            
+            <div class="menu-info">
+                <div class="info-item">
+                    <span class="info-label">Durée :</span>
+                    <span class="info-value">1 minute</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Objectif :</span>
+                    <span class="info-value">Éliminer un maximum d'ennemis</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- HUD d'entraînement -->
+    <div id="trainingHUD" class="hud-container hidden">
+        <div class="hud-stats">
+            <div class="stat-box">
+                <div class="stat-label">Kills</div>
+                <div id="killsCount" class="stat-value">0</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">Temps restant</div>
+                <div id="timerDisplay" class="stat-value">01:00</div>
+            </div>
+        </div>
+        
+        <button id="quitButton" class="btn btn-quit">
+            <span class="btn-icon">🚪</span>
+            Quitter l'entraînement
+        </button>
+    </div>
+    
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
