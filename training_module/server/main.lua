@@ -1,77 +1,174 @@
--- Script de gestion des sessions d'entraînement (SERVEUR)
-print('[Training] Server script loading...')
+-- Script de gestion des sessions d'entraînement (SERVEUR CORRIGÉ)
+print('[Training] ===== SERVER LOADING =====')
+
+-- Initialiser ESX
+local ESX = nil
+
+CreateThread(function()
+    while ESX == nil do
+        ESX = exports['es_extended']:getSharedObject()
+        if ESX then
+            print('[Training] ✅ ESX initialized successfully')
+        else
+            print('[Training] ⏳ Waiting for ESX...')
+            Wait(100)
+        end
+    end
+end)
 
 local activeSessions = {}
 local nextBucketId = 1000
+local playerStats = {}
 
-print('[Training] Server script loaded successfully')
+print('[Training] Server script loaded')
 
 -- Fonction pour générer un ID de bucket unique
 local function GetNextBucketId()
     nextBucketId = nextBucketId + 1
+    print('[Training] Generated new bucket ID: ' .. nextBucketId)
     return nextBucketId
 end
 
+-- Fonction pour obtenir les paramètres de difficulté
+local function GetDifficultyConfig(difficulty)
+    if Config.Difficulty.enabled and Config.Difficulty[difficulty] then
+        return Config.Difficulty[difficulty]
+    end
+    return Config.Difficulty.medium
+end
+
+-- Fonction pour choisir un type de bot aléatoire
+local function GetRandomBotType(difficulty)
+    if not Config.BotTypes.enabled then
+        local diffConfig = GetDifficultyConfig(difficulty)
+        return {
+            model = Config.Training.botModel,
+            weapon = diffConfig.botWeapon,
+            health = diffConfig.botHealth,
+            armor = diffConfig.botArmor,
+            accuracy = diffConfig.botAccuracy
+        }
+    end
+    
+    local totalChance = 0
+    local botTypes = {}
+    
+    for typeName, botType in pairs(Config.BotTypes) do
+        -- Ignorer la propriété 'enabled' et vérifier que c'est bien un type de bot
+        if typeName ~= 'enabled' and type(botType) == 'table' and botType.spawnChance and type(botType.spawnChance) == 'number' then
+            totalChance = totalChance + botType.spawnChance
+            table.insert(botTypes, {name = typeName, data = botType, chance = botType.spawnChance})
+            print('[Training] Bot type registered: ' .. typeName .. ' (chance: ' .. botType.spawnChance .. '%)')
+        end
+    end
+    
+    if #botTypes == 0 then
+        print('[Training] ⚠️ No bot types found, using default')
+        local diffConfig = GetDifficultyConfig(difficulty)
+        return {
+            model = Config.Training.botModel,
+            weapon = diffConfig.botWeapon,
+            health = diffConfig.botHealth,
+            armor = diffConfig.botArmor,
+            accuracy = diffConfig.botAccuracy
+        }
+    end
+    
+    local random = math.random(1, totalChance)
+    local current = 0
+    
+    for _, botType in ipairs(botTypes) do
+        current = current + botType.chance
+        if random <= current then
+            print('[Training] Selected bot type: ' .. botType.name)
+            return botType.data
+        end
+    end
+    
+    -- Fallback sur le premier type disponible
+    print('[Training] Using fallback bot type: ' .. botTypes[1].name)
+    return botTypes[1].data
+end
+
 -- Fonction pour créer une session d'entraînement
-local function CreateTrainingSession(source)
-    print('[Training] Creating training session for player ' .. source)
+local function CreateTrainingSession(source, difficulty)
+    print('[Training] ===== CREATING SESSION =====')
+    print('[Training] Player: ' .. source)
+    print('[Training] Difficulty: ' .. difficulty)
     
     local bucketId = GetNextBucketId()
+    local difficultyConfig = GetDifficultyConfig(difficulty)
     
     activeSessions[source] = {
         bucketId = bucketId,
         kills = 0,
+        headshots = 0,
         startTime = os.time(),
         bots = {},
-        timerActive = true
+        timerActive = true,
+        difficulty = difficulty,
+        difficultyConfig = difficultyConfig
     }
     
-    -- Assigner le joueur au bucket
+    if not playerStats[source] then
+        playerStats[source] = {
+            totalKills = 0,
+            totalHeadshots = 0,
+            bestScore = 0,
+            gamesPlayed = 0
+        }
+    end
+    
+    playerStats[source].gamesPlayed = playerStats[source].gamesPlayed + 1
+    
     SetPlayerRoutingBucket(source, bucketId)
     SetRoutingBucketEntityLockdownMode(bucketId, 'strict')
     
-    print('[Training] Player ' .. source .. ' assigned to bucket ' .. bucketId)
+    print('[Training] ✅ Session created - Bucket: ' .. bucketId)
+    print('[Training] =========================')
     
     return bucketId
 end
 
 -- Fonction pour spawner un bot
 local function SpawnBot(source, session)
-    if not activeSessions[source] then return end
+    if not activeSessions[source] then 
+        print('[Training] ❌ ERROR: Session not found for player ' .. source)
+        return 
+    end
     
-    print('[Training] Spawning bot for player ' .. source)
+    print('[Training] ----- Spawning Bot -----')
     
-    -- Choisir un point de spawn aléatoire
     local spawnPoint = Config.BotSpawnPoints[math.random(1, #Config.BotSpawnPoints)]
+    local botTypeData = GetRandomBotType(session.difficulty)
     
-    -- Charger le modèle
-    local model = GetHashKey(Config.Training.botModel)
+    print('[Training] Spawn: ' .. spawnPoint.x .. ', ' .. spawnPoint.y)
+    print('[Training] Model: ' .. botTypeData.model)
+    print('[Training] Weapon: ' .. botTypeData.weapon)
     
-    -- Créer le bot côté serveur (minimal)
+    local model = GetHashKey(botTypeData.model)
     local bot = CreatePed(4, model, spawnPoint.x, spawnPoint.y, spawnPoint.z, spawnPoint.w, true, true)
     
     if not DoesEntityExist(bot) then
-        print('[Training] ERROR: Failed to create bot')
+        print('[Training] ❌ ERROR: Failed to create bot!')
         return
     end
     
-    print('[Training] Bot entity created: ' .. bot)
-    
-    -- IMPORTANT : Assigner le bot au routing bucket (côté serveur uniquement)
     SetEntityRoutingBucket(bot, session.bucketId)
     
-    print('[Training] Bot assigned to bucket: ' .. session.bucketId)
-    
-    -- Obtenir le NetworkId
     local botNetId = NetworkGetNetworkIdFromEntity(bot)
     
-    -- Ajouter à la liste des bots de la session
-    table.insert(session.bots, {entity = bot, netId = botNetId})
+    table.insert(session.bots, {
+        entity = bot,
+        netId = botNetId,
+        type = botTypeData
+    })
     
-    print('[Training] Bot created server-side, NetID: ' .. botNetId .. ', Bucket: ' .. session.bucketId)
+    print('[Training] ✅ Bot created - NetID: ' .. botNetId .. ' | Total: ' .. #session.bots)
     
-    -- Notifier le client pour qu'il gère la configuration et le comportement
-    TriggerClientEvent('training:configureBotClient', source, botNetId, spawnPoint)
+    TriggerClientEvent('training:configureBotClient', source, botNetId, spawnPoint, botTypeData)
+    
+    print('[Training] -----------------------')
 end
 
 -- Fonction pour gérer le respawn d'un bot
@@ -85,42 +182,89 @@ local function RespawnBot(source)
     end)
 end
 
+-- Fonction pour calculer les récompenses
+local function CalculateRewards(session, source)
+    if not Config.Rewards.enabled or not ESX then return end
+    
+    local xPlayer = ESX.GetPlayerFromId(source)
+    if not xPlayer then return end
+    
+    local totalMoney = 0
+    local totalXP = 0
+    
+    for _, milestone in ipairs(Config.Rewards.killMilestones) do
+        if session.kills >= milestone.kills then
+            totalMoney = milestone.money
+            totalXP = milestone.xp
+        end
+    end
+    
+    if session.kills > 0 then
+        local headshotPercent = math.floor((session.headshots / session.kills) * 100)
+        
+        if headshotPercent >= Config.Rewards.bonuses.headhunter.threshold then
+            totalMoney = totalMoney + Config.Rewards.bonuses.headhunter.money
+            totalXP = totalXP + Config.Rewards.bonuses.headhunter.xp
+            TriggerClientEvent('esx:showNotification', source, '🎯 Bonus Headhunter: +' .. Config.Rewards.bonuses.headhunter.money .. '$')
+        end
+        
+        local killsPerMinute = session.kills
+        if killsPerMinute >= Config.Rewards.bonuses.speedKiller.threshold then
+            totalMoney = totalMoney + Config.Rewards.bonuses.speedKiller.money
+            totalXP = totalXP + Config.Rewards.bonuses.speedKiller.xp
+            TriggerClientEvent('esx:showNotification', source, '⚡ Bonus Rapidité: +' .. Config.Rewards.bonuses.speedKiller.money .. '$')
+        end
+    end
+    
+    if totalMoney > 0 then
+        xPlayer.addMoney(totalMoney)
+        TriggerClientEvent('esx:showNotification', source, '💰 Récompense totale: ' .. totalMoney .. '$')
+    end
+    
+    print('[Training] Player ' .. source .. ' earned: ' .. totalMoney .. '$ and ' .. totalXP .. ' XP')
+end
+
 -- Fonction pour terminer une session
 local function EndTrainingSession(source, returnToLobby)
     if not activeSessions[source] then return end
     
-    print('[Training] Ending training session for player ' .. source)
+    print('[Training] ===== ENDING SESSION =====')
+    print('[Training] Player: ' .. source)
     
     local session = activeSessions[source]
     session.timerActive = false
     
-    -- Supprimer tous les bots de la session
+    if playerStats[source] then
+        playerStats[source].totalKills = playerStats[source].totalKills + session.kills
+        playerStats[source].totalHeadshots = playerStats[source].totalHeadshots + session.headshots
+        
+        if session.kills > playerStats[source].bestScore then
+            playerStats[source].bestScore = session.kills
+            TriggerClientEvent('esx:showNotification', source, Config.Messages.newRecord)
+        end
+    end
+    
+    CalculateRewards(session, source)
+    
     for _, botData in ipairs(session.bots) do
         if DoesEntityExist(botData.entity) then
-            print('[Training] Deleting bot entity: ' .. botData.netId)
             DeleteEntity(botData.entity)
         end
     end
     
-    -- Notifier le client de la fin de session
     TriggerClientEvent('training:sessionEnded', source, session.kills)
-    
-    -- Notifier le client pour nettoyer sa liste de bots
     TriggerClientEvent('training:cleanupBots', source)
     
-    -- Attendre un peu avant de remettre le joueur dans le monde public
+    print('[Training] ✅ Session ended')
+    print('[Training] =========================')
+    
     SetTimeout(3000, function()
         if returnToLobby then
             TriggerClientEvent('training:teleportToLobby', source)
         end
         
-        -- Remettre le joueur dans le bucket public
         SetPlayerRoutingBucket(source, 0)
-        
-        -- Supprimer la session
         activeSessions[source] = nil
-        
-        print('[Training] Player ' .. source .. ' returned to public bucket')
     end)
 end
 
@@ -131,19 +275,21 @@ local function StartSessionTimer(source)
     local session = activeSessions[source]
     local duration = Config.Training.duration
     
+    print('[Training] ⏰ Timer started: ' .. duration .. ' seconds')
+    
     CreateThread(function()
         for i = duration, 0, -1 do
             if not activeSessions[source] or not session.timerActive then
+                print('[Training] ⏰ Timer stopped early')
                 break
             end
             
-            -- Mettre à jour le timer côté client
             TriggerClientEvent('training:updateTimer', source, i)
             
             Wait(1000)
             
-            -- Fin du timer
             if i == 0 then
+                print('[Training] ⏰ Timer finished!')
                 EndTrainingSession(source, true)
             end
         end
@@ -151,55 +297,50 @@ local function StartSessionTimer(source)
 end
 
 -- Événement: Démarrer une session d'entraînement
-print('[Training] Registering training:startSession event handler')
 RegisterNetEvent('training:startSession')
-AddEventHandler('training:startSession', function()
+AddEventHandler('training:startSession', function(difficulty)
     local source = source
+    difficulty = difficulty or 'medium'
     
-    print('[Training] ===== START SESSION EVENT RECEIVED =====')
-    print('[Training] Start session request from player ' .. source)
+    print('[Training] ========================================')
+    print('[Training] 🎮 START SESSION REQUEST')
+    print('[Training] Player: ' .. source)
+    print('[Training] Difficulty: ' .. difficulty)
+    print('[Training] ========================================')
     
-    -- Vérifier si le joueur n'a pas déjà une session active
     if activeSessions[source] then
-        print('[Training] Player ' .. source .. ' already has an active session')
+        print('[Training] ❌ Player already has active session!')
         return
     end
     
-    print('[Training] Creating new session for player ' .. source)
+    local bucketId = CreateTrainingSession(source, difficulty)
     
-    -- Créer la session
-    local bucketId = CreateTrainingSession(source)
-    
-    print('[Training] Session created, teleporting player...')
-    
-    -- Téléporter le joueur
     TriggerClientEvent('training:teleportToTraining', source)
     
-    -- Attendre que le joueur soit téléporté
-    Wait(1000)
+    Wait(1500)
     
-    print('[Training] Spawning ' .. Config.Training.maxBots .. ' bots...')
+    print('[Training] 🤖 Spawning ' .. Config.Training.maxBots .. ' bots...')
     
-    -- Spawner les bots initiaux
     for i = 1, Config.Training.maxBots do
         print('[Training] Spawning bot ' .. i .. '/' .. Config.Training.maxBots)
         SpawnBot(source, activeSessions[source])
+        Wait(200)
     end
     
-    print('[Training] Starting session timer...')
+    print('[Training] ✅ All bots spawned!')
     
-    -- Démarrer le timer
     StartSessionTimer(source)
     
-    print('[Training] ===== SESSION STARTED =====')
+    print('[Training] ========================================')
+    print('[Training] 🎮 SESSION STARTED SUCCESSFULLY')
+    print('[Training] ========================================')
 end)
 
 -- Événement: Arrêter une session d'entraînement
 RegisterNetEvent('training:stopSession')
 AddEventHandler('training:stopSession', function()
     local source = source
-    
-    print('[Training] Stop session request from player ' .. source)
+    print('[Training] 🛑 Stop session request from player ' .. source)
     
     if activeSessions[source] then
         EndTrainingSession(source, true)
@@ -208,75 +349,93 @@ end)
 
 -- Événement: Un bot a été tué
 RegisterNetEvent('training:botKilled')
-AddEventHandler('training:botKilled', function(botNetId)
+AddEventHandler('training:botKilled', function(botNetId, isHeadshot)
     local source = source
     
     if not activeSessions[source] then return end
     
-    print('[Training] Bot killed by player ' .. source)
-    
-    -- Incrémenter les kills
     activeSessions[source].kills = activeSessions[source].kills + 1
     
-    -- Mettre à jour le score côté client
-    TriggerClientEvent('training:updateKills', source, activeSessions[source].kills)
+    if isHeadshot then
+        activeSessions[source].headshots = activeSessions[source].headshots + 1
+        print('[Training] 💀 HEADSHOT! Player ' .. source .. ' - Total: ' .. activeSessions[source].headshots)
+    else
+        print('[Training] ✓ Kill! Player ' .. source .. ' - Total: ' .. activeSessions[source].kills)
+    end
     
-    -- Respawn un nouveau bot
+    TriggerClientEvent('training:updateKills', source, activeSessions[source].kills, isHeadshot)
+    
     RespawnBot(source)
 end)
+
+-- Commande pour voir ses stats
+RegisterCommand('trainstats', function(source, args, rawCommand)
+    if playerStats[source] then
+        local stats = playerStats[source]
+        TriggerClientEvent('chat:addMessage', source, {
+            color = {0, 255, 0},
+            multiline = true,
+            args = {"📊 Statistiques", string.format(
+                "\nParties: %d | Kills: %d | Headshots: %d | Record: %d",
+                stats.gamesPlayed,
+                stats.totalKills,
+                stats.totalHeadshots,
+                stats.bestScore
+            )}
+        })
+    end
+end, false)
 
 -- Gestion de la déconnexion
 AddEventHandler('playerDropped', function(reason)
     local source = source
     
     if activeSessions[source] then
-        print('[Training] Player ' .. source .. ' disconnected, cleaning up session')
+        print('[Training] Player ' .. source .. ' disconnected, cleaning session')
         
-        -- Supprimer tous les bots de la session
         for _, botData in ipairs(activeSessions[source].bots) do
             if DoesEntityExist(botData.entity) then
                 DeleteEntity(botData.entity)
             end
         end
         
-        -- Nettoyer la session sans retour au lobby
-        activeSessions[source].timerActive = false
         activeSessions[source] = nil
     end
 end)
 
--- Nettoyage à l'arrêt de la ressource
+-- Nettoyage à l'arrêt
 AddEventHandler('onResourceStop', function(resourceName)
     if GetCurrentResourceName() ~= resourceName then return end
     
-    print('[Training] Resource stopping, cleaning up all sessions')
+    print('[Training] Cleaning all sessions...')
     
     for source, session in pairs(activeSessions) do
-        -- Supprimer tous les bots
         for _, botData in ipairs(session.bots) do
             if DoesEntityExist(botData.entity) then
                 DeleteEntity(botData.entity)
             end
         end
         
-        -- Remettre tous les joueurs dans le bucket public
         SetPlayerRoutingBucket(source, 0)
-        
-        -- Nettoyer les bots côté client
         TriggerClientEvent('training:cleanupBots', source)
     end
     
     activeSessions = {}
 end)
 
--- Commande admin pour debug
-RegisterCommand('training:debug', function(source, args, rawCommand)
-    if source == 0 then -- Console serveur uniquement
+-- Commande debug
+RegisterCommand('training:debug', function(source, args)
+    if source == 0 then
         print('[Training] ===== DEBUG INFO =====')
-        print('[Training] Active sessions: ' .. tostring(#activeSessions))
+        local count = 0
+        for _ in pairs(activeSessions) do count = count + 1 end
+        print('[Training] Active sessions: ' .. count)
         for playerId, session in pairs(activeSessions) do
-            print('[Training] Player ' .. playerId .. ' - Bucket: ' .. session.bucketId .. ' - Kills: ' .. session.kills)
+            print(string.format('[Training] Player %d - Bucket: %d - Kills: %d - Headshots: %d - Bots: %d',
+                playerId, session.bucketId, session.kills, session.headshots, #session.bots))
         end
         print('[Training] ====================')
     end
 end, true)
+
+print('[Training] ===== SERVER READY =====')

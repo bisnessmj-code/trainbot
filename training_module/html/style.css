@@ -32,7 +32,8 @@ body {
     background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
     border-radius: 20px;
     padding: 40px;
-    min-width: 500px;
+    min-width: 600px;
+    max-width: 700px;
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
     border: 2px solid rgba(255, 255, 255, 0.1);
     animation: slideIn 0.3s ease-out;
@@ -62,6 +63,64 @@ body {
     text-align: center;
     margin-bottom: 30px;
     font-size: 16px;
+}
+
+/* 🆕 Sélecteur de difficulté */
+.difficulty-selector {
+    margin-bottom: 30px;
+}
+
+.difficulty-selector h3 {
+    color: #fff;
+    text-align: center;
+    margin-bottom: 20px;
+    font-size: 18px;
+}
+
+.difficulty-buttons {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 15px;
+}
+
+.difficulty-btn {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.02) 100%);
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 20px 15px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+
+.difficulty-btn:hover {
+    border-color: rgba(102, 126, 234, 0.5);
+    transform: translateY(-3px);
+    box-shadow: 0 5px 20px rgba(102, 126, 234, 0.3);
+}
+
+.difficulty-btn.active {
+    border-color: #667eea;
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.2) 0%, rgba(118, 75, 162, 0.2) 100%);
+    box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+}
+
+.difficulty-icon {
+    font-size: 32px;
+}
+
+.difficulty-name {
+    color: #fff;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.difficulty-desc {
+    color: #b8b8b8;
+    font-size: 12px;
 }
 
 .menu-buttons {
@@ -173,17 +232,57 @@ body {
 .hud-stats {
     display: flex;
     gap: 15px;
+    flex-wrap: wrap;
+    max-width: 500px;
 }
 
 .stat-box {
     background: linear-gradient(135deg, rgba(26, 26, 46, 0.95) 0%, rgba(22, 33, 62, 0.95) 100%);
     border-radius: 12px;
     padding: 15px 25px;
-    min-width: 150px;
+    min-width: 120px;
     box-shadow: 0 5px 20px rgba(0, 0, 0, 0.5);
     border: 2px solid rgba(255, 255, 255, 0.1);
     backdrop-filter: blur(10px);
     animation: fadeIn 0.3s ease-out;
+}
+
+/* 🆕 Style spécial pour la série */
+.streak-box {
+    border-color: rgba(255, 165, 0, 0.3);
+}
+
+.streak-box .stat-value.streak-fire {
+    color: #ff6b00;
+    text-shadow: 0 0 10px rgba(255, 107, 0, 0.8);
+    animation: fireGlow 0.5s ease-in-out infinite;
+}
+
+@keyframes fireGlow {
+    0%, 100% {
+        text-shadow: 0 0 10px rgba(255, 107, 0, 0.8);
+    }
+    50% {
+        text-shadow: 0 0 20px rgba(255, 107, 0, 1);
+    }
+}
+
+/* 🆕 Style spécial pour le timer */
+.timer-box {
+    border-color: rgba(102, 126, 234, 0.3);
+}
+
+.timer-urgent {
+    animation: timerPulse 0.5s ease-in-out infinite;
+}
+
+@keyframes timerPulse {
+    0%, 100% {
+        transform: scale(1);
+    }
+    50% {
+        transform: scale(1.1);
+    }
 }
 
 @keyframes fadeIn {
@@ -232,12 +331,27 @@ body {
         transform: scale(1);
     }
     50% {
-        transform: scale(1.05);
+        transform: scale(1.1);
     }
 }
 
 .stat-value.pulse {
     animation: pulse 0.3s ease-in-out;
+}
+
+/* 🆕 Animation spéciale pour les headshots */
+.stat-value.headshot-glow {
+    color: #ffd700;
+    text-shadow: 0 0 20px rgba(255, 215, 0, 0.8);
+}
+
+@keyframes headshotGlow {
+    0%, 100% {
+        text-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
+    }
+    50% {
+        text-shadow: 0 0 30px rgba(255, 215, 0, 1);
+    }
 }
 
 /* Responsive */
@@ -247,6 +361,10 @@ body {
         padding: 30px;
     }
     
+    .difficulty-buttons {
+        grid-template-columns: 1fr;
+    }
+    
     .hud-container {
         bottom: 20px;
         right: 20px;
@@ -254,9 +372,10 @@ body {
     
     .hud-stats {
         flex-direction: column;
+        max-width: 150px;
     }
     
     .stat-box {
-        min-width: 120px;
+        min-width: 100px;
     }
 }

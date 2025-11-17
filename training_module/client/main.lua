@@ -1,18 +1,38 @@
--- Script client du module d'entraînement
-print('[Training Client] Loading...')
+-- Script client du module d'entraînement (VERSION AMÉLIORÉE)
+print('[Training Client] Loading improved version...')
 
 -- Variables globales
 local lobbyNPC = nil
 local isTrainingActive = false
 local nearNPC = false
 local kills = 0
+local headshots = 0
+local totalShots = 0
+local hits = 0
+local bestStreak = 0
+local currentStreak = 0
 local timeRemaining = 0
+local selectedDifficulty = 'medium'
 
 -- Fonction de notification simple
 local function ShowNotification(message)
     BeginTextCommandThefeedPost('STRING')
     AddTextComponentSubstringPlayerName(message)
     EndTextCommandThefeedPostTicker(false, true)
+end
+
+-- 🆕 Notification avancée avec couleur
+local function ShowAdvancedNotification(message, type)
+    local colors = {
+        success = '~g~',
+        warning = '~o~',
+        error = '~r~',
+        info = '~b~',
+        special = '~p~'
+    }
+    
+    local color = colors[type] or ''
+    ShowNotification(color .. message)
 end
 
 -- Fonction pour afficher le texte d'aide
@@ -42,7 +62,6 @@ local function SpawnLobbyNPC()
     SetEntityInvincible(lobbyNPC, true)
     FreezeEntityPosition(lobbyNPC, true)
     
-    -- Charger et jouer l'animation
     RequestAnimDict(Config.LobbyNPC.animation.dict)
     while not HasAnimDictLoaded(Config.LobbyNPC.animation.dict) do
         Wait(100)
@@ -61,7 +80,8 @@ local function OpenTrainingUI()
     SetNuiFocus(true, true)
     SendNUIMessage({
         action = 'openMenu',
-        isTraining = isTrainingActive
+        isTraining = isTrainingActive,
+        difficulties = Config.Difficulty.enabled and Config.Difficulty or nil
     })
 end
 
@@ -74,28 +94,41 @@ local function CloseTrainingUI()
     })
 end
 
--- Fonction pour démarrer l'entraînement
-local function StartTraining()
-    print('[Training Client] Starting training session')
-    isTrainingActive = true
+-- 🆕 Fonction pour reset les stats
+local function ResetStats()
     kills = 0
+    headshots = 0
+    totalShots = 0
+    hits = 0
+    currentStreak = 0
+end
+
+-- Fonction pour démarrer l'entraînement
+local function StartTraining(difficulty)
+    print('[Training Client] Starting training session with difficulty: ' .. difficulty)
+    isTrainingActive = true
+    selectedDifficulty = difficulty or 'medium'
+    
+    -- Reset stats
+    ResetStats()
     timeRemaining = Config.Training.duration
     
-    -- Fermer l'UI de menu
     CloseTrainingUI()
     
-    -- Notifier le serveur
-    TriggerServerEvent('training:startSession')
+    -- Notifier le serveur avec la difficulté
+    TriggerServerEvent('training:startSession', selectedDifficulty)
     
     -- Afficher le HUD
     SendNUIMessage({
         action = 'showHUD',
         kills = kills,
-        time = timeRemaining
+        time = timeRemaining,
+        headshots = headshots,
+        accuracy = 0,
+        streak = 0
     })
     
-    -- Afficher notification
-    ShowNotification(Config.Messages.trainingStart)
+    ShowAdvancedNotification(Config.Messages.trainingStart, 'success')
 end
 
 -- Fonction pour arrêter l'entraînement
@@ -103,33 +136,41 @@ local function StopTraining()
     print('[Training Client] Stopping training session')
     isTrainingActive = false
     
-    -- Cacher le HUD
     SendNUIMessage({
         action = 'hideHUD'
     })
     
-    -- Notifier le serveur
     TriggerServerEvent('training:stopSession')
     
-    -- Afficher le score final
+    -- Calculer les stats finales
+    local accuracy = totalShots > 0 and math.floor((hits / totalShots) * 100) or 0
+    local headshotPercent = kills > 0 and math.floor((headshots / kills) * 100) or 0
+    
     ShowNotification(string.format(Config.Messages.finalScore, kills))
+    
+    if Config.Stats.enabled then
+        Wait(1000)
+        ShowNotification(string.format('Headshots: %s (%s%%)', headshots, headshotPercent))
+        Wait(500)
+        ShowNotification(string.format('Précision: %s%%', accuracy))
+        Wait(500)
+        ShowNotification(string.format('Meilleure série: %s kills', bestStreak))
+    end
 end
 
 -- Callbacks NUI
 RegisterNUICallback('close', function(data, cb)
-    print('[Training Client] NUI callback: close')
     CloseTrainingUI()
     cb('ok')
 end)
 
 RegisterNUICallback('startTraining', function(data, cb)
-    print('[Training Client] NUI callback: startTraining')
-    StartTraining()
+    local difficulty = data.difficulty or 'medium'
+    StartTraining(difficulty)
     cb('ok')
 end)
 
 RegisterNUICallback('stopTraining', function(data, cb)
-    print('[Training Client] NUI callback: stopTraining')
     StopTraining()
     cb('ok')
 end)
@@ -141,7 +182,6 @@ AddEventHandler('training:teleportToTraining', function()
     
     local playerPed = PlayerPedId()
     
-    -- Téléportation
     DoScreenFadeOut(500)
     Wait(500)
     
@@ -150,22 +190,17 @@ AddEventHandler('training:teleportToTraining', function()
     
     Wait(100)
     
-    -- Préparer le joueur
     SetEntityHealth(playerPed, 200)
     SetPedArmour(playerPed, 100)
     
-    -- Retirer toutes les armes et donner l'arme d'entraînement
     RemoveAllPedWeapons(playerPed, true)
     GiveWeaponToPed(playerPed, GetHashKey(Config.Training.weapon), 9999, false, true)
     SetPedInfiniteAmmo(playerPed, true, GetHashKey(Config.Training.weapon))
     
-    -- Stamina illimitée
     RestorePlayerStamina(PlayerId(), 1.0)
     SetRunSprintMultiplierForPlayer(PlayerId(), 1.49)
     
     DoScreenFadeIn(500)
-    
-    print('[Training Client] Player prepared for training')
 end)
 
 RegisterNetEvent('training:teleportToLobby')
@@ -180,27 +215,55 @@ AddEventHandler('training:teleportToLobby', function()
     SetEntityCoords(playerPed, Config.LobbyNPC.coords.x, Config.LobbyNPC.coords.y, Config.LobbyNPC.coords.z, false, false, false, true)
     SetEntityHeading(playerPed, Config.LobbyNPC.coords.w)
     
-    -- Retirer les armes
     RemoveAllPedWeapons(playerPed, true)
-    
-    -- Reset stamina
     SetRunSprintMultiplierForPlayer(PlayerId(), 1.0)
     
     DoScreenFadeIn(500)
-    
-    print('[Training Client] Player returned to lobby')
 end)
 
 RegisterNetEvent('training:updateKills')
-AddEventHandler('training:updateKills', function(newKills)
+AddEventHandler('training:updateKills', function(newKills, isHeadshot)
     print('[Training Client] Kills updated: ' .. newKills)
     kills = newKills
+    currentStreak = currentStreak + 1
+    
+    if currentStreak > bestStreak then
+        bestStreak = currentStreak
+    end
+    
+    -- 🆕 Gestion des headshots
+    if isHeadshot then
+        headshots = headshots + 1
+        if Config.Stats.trackHeadshots then
+            ShowAdvancedNotification(Config.Messages.headshot, 'special')
+            
+            -- 🆕 Effet sonore headshot
+            if Config.VisualEffects.soundEffects.enabled and Config.VisualEffects.soundEffects.onHeadshot then
+                PlaySoundFrontend(-1, "CHECKPOINT_PERFECT", "HUD_MINI_GAME_SOUNDSET", true)
+            end
+        end
+    end
+    
+    -- 🆕 Notification de série
+    if currentStreak > 0 and currentStreak % 5 == 0 then
+        ShowAdvancedNotification(string.format(Config.Messages.killStreak, currentStreak), 'warning')
+    end
     
     if isTrainingActive then
+        local accuracy = totalShots > 0 and math.floor((hits / totalShots) * 100) or 0
+        
         SendNUIMessage({
             action = 'updateKills',
-            kills = kills
+            kills = kills,
+            headshots = headshots,
+            accuracy = accuracy,
+            streak = currentStreak
         })
+        
+        -- 🆕 Effet sonore kill
+        if Config.VisualEffects.soundEffects.enabled and Config.VisualEffects.soundEffects.onKill then
+            PlaySoundFrontend(-1, "BASE_JUMP_PASSED", "HUD_AWARDS", true)
+        end
     end
 end)
 
@@ -223,26 +286,65 @@ AddEventHandler('training:sessionEnded', function(finalKills)
     isTrainingActive = false
     kills = finalKills
     
-    -- Cacher le HUD
     SendNUIMessage({
         action = 'hideHUD'
     })
     
-    -- Afficher le message de fin
     ShowNotification(Config.Messages.trainingEnd)
     Wait(1000)
+    
+    -- Stats finales
+    local accuracy = totalShots > 0 and math.floor((hits / totalShots) * 100) or 0
+    local headshotPercent = kills > 0 and math.floor((headshots / kills) * 100) or 0
+    
     ShowNotification(string.format(Config.Messages.finalScore, finalKills))
+    
+    if Config.Stats.enabled then
+        Wait(800)
+        ShowAdvancedNotification(string.format('💀 Headshots: %s (%s%%)', headshots, headshotPercent), 'info')
+        Wait(600)
+        ShowAdvancedNotification(string.format('🎯 Précision: %s%%', accuracy), 'info')
+        Wait(600)
+        ShowAdvancedNotification(string.format('🔥 Meilleure série: %s', bestStreak), 'warning')
+    end
 end)
 
 -- Gestion des bots
 local activeBots = {}
 
+-- 🆕 Fonction pour obtenir un type de bot aléatoire
+local function GetRandomBotType()
+    if not Config.BotTypes.enabled then
+        return nil
+    end
+    
+    local totalChance = 0
+    for _, botType in pairs(Config.BotTypes) do
+        if botType.spawnChance then
+            totalChance = totalChance + botType.spawnChance
+        end
+    end
+    
+    local random = math.random(1, totalChance)
+    local current = 0
+    
+    for typeName, botType in pairs(Config.BotTypes) do
+        if botType.spawnChance then
+            current = current + botType.spawnChance
+            if random <= current then
+                return typeName, botType
+            end
+        end
+    end
+    
+    return 'soldier', Config.BotTypes.soldier
+end
+
 -- Événement pour configurer et gérer un bot créé par le serveur
 RegisterNetEvent('training:configureBotClient')
-AddEventHandler('training:configureBotClient', function(botNetId, spawnPoint)
+AddEventHandler('training:configureBotClient', function(botNetId, spawnPoint, botTypeData)
     print('[Training Client] Configuring bot for NetID: ' .. botNetId)
     
-    -- Attendre que l'entité soit disponible
     local timeout = 0
     local bot = nil
     
@@ -264,60 +366,90 @@ AddEventHandler('training:configureBotClient', function(botNetId, spawnPoint)
     
     print('[Training Client] Bot entity found, configuring...')
     
-    -- Configuration du bot (CÔTÉ CLIENT)
+    -- Configuration du bot
     SetEntityAsMissionEntity(bot, true, true)
-    SetEntityHealth(bot, 200)
-    SetPedArmour(bot, 50)
+    SetEntityHealth(bot, botTypeData.health or 200)
+    SetPedArmour(bot, botTypeData.armor or 50)
     SetPedCanSwitchWeapon(bot, true)
     SetPedFleeAttributes(bot, 0, false)
-    SetPedCombatAttributes(bot, 46, true) -- Always fight
-    SetPedCombatAttributes(bot, 5, true) -- Can use cover
-    SetPedCombatMovement(bot, 2) -- Offensive
+    SetPedCombatAttributes(bot, 46, true)
+    SetPedCombatAttributes(bot, 5, true)
+    SetPedCombatMovement(bot, 2)
     SetPedAlertness(bot, 3)
     SetPedSeeingRange(bot, 100.0)
     SetPedHearingRange(bot, 100.0)
-    SetPedAccuracy(bot, 40)
+    SetPedAccuracy(bot, botTypeData.accuracy or 40)
     
     -- Donner une arme au bot
-    GiveWeaponToPed(bot, GetHashKey(Config.Training.botWeapon), 250, false, true)
-    SetCurrentPedWeapon(bot, GetHashKey(Config.Training.botWeapon), true)
+    GiveWeaponToPed(bot, GetHashKey(botTypeData.weapon), 250, false, true)
+    SetCurrentPedWeapon(bot, GetHashKey(botTypeData.weapon), true)
     
     print('[Training Client] Bot configured successfully')
     
-    -- Ajouter à la liste des bots actifs
     table.insert(activeBots, {entity = bot, netId = botNetId})
     
     local playerPed = PlayerPedId()
     
     -- Démarrer le comportement du bot
-    print('[Training Client] Starting bot behavior')
-    
-    -- Combat avec le joueur
     TaskCombatPed(bot, playerPed, 0, 16)
     
-    -- Thread pour les mouvements aléatoires
+    -- 🆕 Thread pour comportements tactiques améliorés
     CreateThread(function()
         while DoesEntityExist(bot) and not IsEntityDead(bot) and isTrainingActive do
-            Wait(math.random(2000, 5000))
+            Wait(math.random(2000, 4000))
             
             if not DoesEntityExist(bot) or IsEntityDead(bot) then break end
             
-            -- Probabilité de faire une roulade
-            if math.random(1, 100) <= Config.Training.rollProbability then
+            local playerPos = GetEntityCoords(playerPed)
+            local botPos = GetEntityCoords(bot)
+            local distance = #(playerPos - botPos)
+            
+            -- 🆕 VRAIE ROULADE avec plusieurs animations possibles
+            local difficultyConfig = Config.Difficulty[selectedDifficulty] or Config.Difficulty.medium
+            local rollChance = difficultyConfig.rollProbability or Config.Training.rollProbability
+            
+            if math.random(1, 100) <= rollChance then
                 print('[Training Client] Bot performing roll')
                 
-                -- Charger l'animation de roulade
-                RequestAnimDict('move_strafe@stealth')
-                while not HasAnimDictLoaded('move_strafe@stealth') do
+                -- Choisir une animation de roulade aléatoire
+                local dodgeAnims = Config.BotBehaviors.dodgeAnimations
+                local selectedAnim = dodgeAnims[math.random(1, #dodgeAnims)]
+                
+                RequestAnimDict(selectedAnim.dict)
+                while not HasAnimDictLoaded(selectedAnim.dict) do
                     Wait(100)
                 end
                 
+                -- Direction aléatoire pour la roulade
+                local randomHeading = math.random(0, 360)
+                SetEntityHeading(bot, randomHeading)
+                
                 -- Faire la roulade
-                TaskPlayAnim(bot, 'move_strafe@stealth', 'idle', 8.0, -8.0, 1000, 0, 0, false, false, false)
-                Wait(1000)
+                TaskPlayAnim(bot, selectedAnim.dict, selectedAnim.anim, 8.0, -8.0, selectedAnim.duration, 0, 0, false, false, false)
+                Wait(selectedAnim.duration)
                 
                 -- Reprendre le combat
                 if DoesEntityExist(bot) and not IsEntityDead(bot) then
+                    TaskCombatPed(bot, playerPed, 0, 16)
+                end
+            end
+            
+            -- 🆕 Comportements tactiques variés
+            if Config.BotBehaviors.tacticalMoves.enabled then
+                local randomBehavior = math.random(1, 100)
+                
+                -- Rush vers le joueur
+                if randomBehavior <= Config.BotBehaviors.tacticalMoves.rushProbability and distance > 10.0 then
+                    print('[Training Client] Bot rushing towards player')
+                    TaskGoToEntity(bot, playerPed, -1, 2.0, 3.0, 0, 0)
+                    Wait(2000)
+                    TaskCombatPed(bot, playerPed, 0, 16)
+                    
+                -- Chercher une couverture
+                elseif randomBehavior <= Config.BotBehaviors.tacticalMoves.coverProbability + Config.BotBehaviors.tacticalMoves.rushProbability then
+                    print('[Training Client] Bot seeking cover')
+                    TaskSeekCoverFromPed(bot, playerPed, 3000, true)
+                    Wait(3000)
                     TaskCombatPed(bot, playerPed, 0, 16)
                 end
             end
@@ -333,8 +465,21 @@ AddEventHandler('training:configureBotClient', function(botNetId, spawnPoint)
         if DoesEntityExist(bot) and IsEntityDead(bot) then
             print('[Training Client] Bot died, NetID: ' .. botNetId)
             
+            -- 🆕 Vérifier si c'est un headshot
+            local isHeadshot = false
+            local cause = GetPedCauseOfDeath(bot)
+            local boneHit = GetPedLastDamageBone(bot)
+            
+            -- Os de la tête : 31086
+            if boneHit == 31086 then
+                isHeadshot = true
+            end
+            
+            -- Reset streak si le joueur est touché
+            currentStreak = currentStreak
+            
             -- Notifier le serveur
-            TriggerServerEvent('training:botKilled', botNetId)
+            TriggerServerEvent('training:botKilled', botNetId, isHeadshot)
             
             -- Retirer de la liste des bots actifs
             for i, botData in ipairs(activeBots) do
@@ -345,6 +490,28 @@ AddEventHandler('training:configureBotClient', function(botNetId, spawnPoint)
             end
         end
     end)
+    
+    -- 🆕 Thread pour marqueur au-dessus du bot
+    if Config.VisualEffects.enabled and Config.VisualEffects.botMarker.enabled then
+        CreateThread(function()
+            while DoesEntityExist(bot) and not IsEntityDead(bot) and isTrainingActive do
+                local botCoords = GetEntityCoords(bot)
+                local markerConfig = Config.VisualEffects.botMarker
+                
+                DrawMarker(
+                    markerConfig.type,
+                    botCoords.x, botCoords.y, botCoords.z + markerConfig.height,
+                    0.0, 0.0, 0.0,
+                    0.0, 0.0, 0.0,
+                    0.3, 0.3, 0.3,
+                    markerConfig.color.r, markerConfig.color.g, markerConfig.color.b, markerConfig.color.a,
+                    false, false, 2, false, nil, nil, false
+                )
+                
+                Wait(0)
+            end
+        end)
+    end
 end)
 
 -- Événement pour nettoyer tous les bots
@@ -352,6 +519,52 @@ RegisterNetEvent('training:cleanupBots')
 AddEventHandler('training:cleanupBots', function()
     print('[Training Client] Cleaning up all bots')
     activeBots = {}
+    currentStreak = 0
+end)
+
+-- 🆕 Thread pour tracker les tirs (précision)
+CreateThread(function()
+    while true do
+        Wait(0)
+        
+        if isTrainingActive and Config.Stats.trackAccuracy then
+            local playerPed = PlayerPedId()
+            
+            if IsPedShooting(playerPed) then
+                totalShots = totalShots + 1
+                
+                -- Vérifier si on touche quelque chose
+                local hasHit, hitEntity = GetEntityPlayerIsFreeAimingAt(PlayerId())
+                
+                if hasHit and IsPedAHumanInCurrentTeam(hitEntity) == false then
+                    hits = hits + 1
+                end
+            end
+        else
+            Wait(500)
+        end
+    end
+end)
+
+-- 🆕 Thread pour reset streak si touché
+CreateThread(function()
+    while true do
+        Wait(100)
+        
+        if isTrainingActive then
+            local playerPed = PlayerPedId()
+            
+            if HasEntityBeenDamagedByAnyPed(playerPed) then
+                if currentStreak > 0 then
+                    print('[Training Client] Streak reset - player was hit')
+                    currentStreak = 0
+                end
+                ClearEntityLastDamageEntity(playerPed)
+            end
+        else
+            Wait(1000)
+        end
+    end
 end)
 
 -- Thread pour gérer la proximité avec le PNJ
@@ -369,11 +582,9 @@ CreateThread(function()
                 sleep = 0
                 nearNPC = true
                 
-                -- Afficher le texte d'aide
                 ShowHelpNotification(Config.Messages.pressE)
                 
-                -- Vérifier l'appui sur E
-                if IsControlJustReleased(0, 38) then -- INPUT_CONTEXT (E)
+                if IsControlJustReleased(0, 38) then
                     OpenTrainingUI()
                 end
             else
@@ -401,24 +612,30 @@ CreateThread(function()
     end
 end)
 
--- Thread pour gérer la touche F1 (quitter l'entraînement)
+-- Thread pour gérer la touche G (quitter l'entraînement)
 CreateThread(function()
     while true do
         Wait(0)
         
         if isTrainingActive then
-            -- Vérifier si F1 est pressé (INPUT_REPLAY_START_STOP_RECORDING = 288)
-            if IsControlJustReleased(0, 288) then
-                print('[Training Client] F1 pressed, stopping training')
+            -- G = INPUT_CONTEXT = 47
+            if IsControlJustReleased(0, 47) then
+                print('[Training Client] G pressed, stopping training')
                 StopTraining()
             end
             
-            -- Afficher le texte d'aide
-            BeginTextCommandDisplayHelp('STRING')
-            AddTextComponentSubstringPlayerName('Appuyez sur ~INPUT_REPLAY_START_STOP_RECORDING~ pour quitter l\'entraînement')
-            EndTextCommandDisplayHelp(0, false, true, -1)
+            -- Afficher le texte au-dessus de la minimap (en bas à gauche)
+            SetTextFont(4)
+            SetTextScale(0.45, 0.45)
+            SetTextColour(255, 255, 255, 255)
+            SetTextDropshadow(0, 0, 0, 0, 255)
+            SetTextEdge(1, 0, 0, 0, 255)
+            SetTextOutline()
+            SetTextEntry("STRING")
+            AddTextComponentString("Appuyez sur ~r~G~w~ pour quitter l'entraînement")
+            DrawText(0.015, 0.85) -- Position au-dessus de la minimap
         else
-            Wait(1000) -- Réduire la charge quand pas en entraînement
+            Wait(1000)
         end
     end
 end)
@@ -439,7 +656,6 @@ AddEventHandler('onResourceStop', function(resourceName)
         DeleteEntity(lobbyNPC)
     end
     
-    -- Nettoyer les bots
     for _, botData in ipairs(activeBots) do
         if DoesEntityExist(botData.entity) then
             DeleteEntity(botData.entity)
@@ -451,4 +667,4 @@ AddEventHandler('onResourceStop', function(resourceName)
     end
 end)
 
-print('[Training Client] Script loaded successfully')
+print('[Training Client] Improved script loaded successfully')
